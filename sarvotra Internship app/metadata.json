@@ -1,0 +1,7 @@
+{
+  "name": "Sarvotra Pay",
+  "description": "A conversational payment assistant using Gemini Live API for real-time voice control.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
