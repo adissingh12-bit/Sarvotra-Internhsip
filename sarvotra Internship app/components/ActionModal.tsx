@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 
+export interface BankDetails {
+  accountNo: string;
+  ifsc: string;
+}
+
 interface ActionModalProps {
   type: 'addMoney' | 'bankTransfer';
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (amount: number, details?: any) => void;
+  onSubmit: (amount: number, details?: BankDetails) => void;
 }
 
-const ActionModal: React.FC<ActionModalProps> = ({ type, isOpen, onClose, onSubmit }) => {
+export default function ActionModal({ type, isOpen, onClose, onSubmit }: ActionModalProps) {
   const [amount, setAmount] = useState('');
   const [accountNo, setAccountNo] = useState('');
   const [ifsc, setIfsc] = useState('');
@@ -22,7 +27,9 @@ const ActionModal: React.FC<ActionModalProps> = ({ type, isOpen, onClose, onSubm
     setIsLoading(true);
     // Simulate network delay
     setTimeout(() => {
-      onSubmit(parseFloat(amount), type === 'bankTransfer' ? { accountNo, ifsc } : undefined);
+      const details = type === 'bankTransfer' ? { accountNo, ifsc } : undefined;
+      onSubmit(parseFloat(amount), details);
+      
       setIsLoading(false);
       setAmount('');
       setAccountNo('');
@@ -38,7 +45,7 @@ const ActionModal: React.FC<ActionModalProps> = ({ type, isOpen, onClose, onSubm
           <h3 className="text-xl font-bold text-gray-800">
             {type === 'addMoney' ? 'Add Money to Wallet' : 'Bank Transfer'}
           </h3>
-          <button onClick={onClose} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
+          <button onClick={onClose} type="button" className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -114,6 +121,4 @@ const ActionModal: React.FC<ActionModalProps> = ({ type, isOpen, onClose, onSubm
       </div>
     </div>
   );
-};
-
-export default ActionModal;
+}
