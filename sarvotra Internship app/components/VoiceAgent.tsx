@@ -63,7 +63,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         
         // 1. Try Vite Standard (import.meta.env)
         try {
-          // @ts-ignore - Check if we are in a Vite environment
+          // @ts-ignore
           if (typeof import.meta !== 'undefined' && import.meta.env) {
             // @ts-ignore
             apiKey = import.meta.env.VITE_API_KEY || import.meta.env.REACT_APP_API_KEY;
@@ -180,6 +180,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             onmessage: async (message: LiveServerMessage) => {
               if (!isActive) return;
 
+              // Handle Audio Output
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
                   const ctx = outputCtx;
@@ -209,28 +210,40 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                   }
               }
 
+              // Handle Tool Calls
               if (message.toolCall) {
                 if (!isActive) return;
                 setIsProcessing(true);
                 console.log('Tool call received:', message.toolCall);
-                for (const fc of message.toolCall.functionCalls) {
-                  if (fc.name === 'makePayment') {
-                    const { contactName, amount } = fc.args as any;
-                    const result = await onPaymentRequest(contactName, amount);
-                    
-                    sessionPromise.then(session => {
-                      if (!isActive) return;
-                      session.sendToolResponse({
-                        functionResponses: [{
-                          id: fc.id,
-                          name: fc.name,
-                          response: { result: result.message }
-                        }]
+                
+                try {
+                  for (const fc of message.toolCall.functionCalls) {
+                    if (fc.name === 'makePayment') {
+                      const { contactName, amount } = fc.args as any;
+                      const result = await onPaymentRequest(contactName, amount);
+                      
+                      console.log('Payment result:', result);
+                      
+                      // Ensure audio context is awake before response comes back
+                      if (outputCtx.state === 'suspended') await outputCtx.resume();
+
+                      sessionPromise.then(session => {
+                        if (!isActive) return;
+                        session.sendToolResponse({
+                          functionResponses: [{
+                            id: fc.id,
+                            name: fc.name,
+                            response: { result: result.message }
+                          }]
+                        });
                       });
-                    });
+                    }
                   }
+                } catch (err) {
+                  console.error("Error executing tool:", err);
+                } finally {
+                  setIsProcessing(false);
                 }
-                setIsProcessing(false);
               }
               
               if (message.serverContent?.interrupted) {
@@ -248,7 +261,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             onerror: (err: any) => {
               console.error('Gemini Live Error', err);
               if (isActive) {
-                // Try to extract a meaningful message from the error event
                 const msg = err.message || "Connection refused. Check API Key.";
                 setErrorMessage(msg);
                 setConnectionState(ConnectionState.ERROR);
