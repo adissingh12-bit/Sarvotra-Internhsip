@@ -6,7 +6,7 @@ import BalanceCard from './components/BalanceCard';
 import ContactList from './components/ContactList';
 import TransactionList from './components/TransactionList';
 import ContactDetail from './components/ContactDetail';
-import ActionModal from './components/ActionModal';
+import ActionModal, { BankDetails } from './components/ActionModal';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('pay');
@@ -99,7 +99,9 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleBankTransfer = (amount: number, details: any) => {
+  const handleBankTransfer = (amount: number, details?: BankDetails) => {
+    if (!details) return;
+    
     const newTransaction: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
       recipientId: 'bank',
