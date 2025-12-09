@@ -5,7 +5,7 @@ import VoiceAgent from './components/VoiceAgent';
 import BalanceCard from './components/BalanceCard';
 import ContactList from './components/ContactList';
 import TransactionList from './components/TransactionList';
-import ContactPayment from './components/ContactPayment';
+import ContactPayment from './components/ContactPayment'; // Updated import
 import ActionModal, { BankDetails } from './components/ActionModal';
 
 const App: React.FC = () => {
