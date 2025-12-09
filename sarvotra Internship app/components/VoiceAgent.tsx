@@ -21,12 +21,13 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 }) => {
   const [volume, setVolume] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  // We track the active session promise to close it on cleanup
   const activeSessionPromiseRef = useRef<Promise<any> | null>(null);
 
   // Define the tool
@@ -55,8 +56,26 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
     const startSession = async () => {
       try {
-        if (!process.env.API_KEY) {
-          console.error("API_KEY is missing from environment variables.");
+        setErrorMessage('');
+        
+        // Robust API Key Retrieval for Vercel/React/Vite
+        let apiKey = '';
+        try {
+          // Check all common prefixes used in frontend frameworks
+          apiKey = process.env.REACT_APP_API_KEY || 
+                   process.env.VITE_API_KEY || 
+                   process.env.NEXT_PUBLIC_API_KEY || 
+                   process.env.API_KEY || 
+                   '';
+        } catch (e) {
+          // Process might be undefined in some browser environments
+          console.warn("Process env access failed", e);
+        }
+
+        if (!apiKey) {
+          const msg = "Missing API Key. Add REACT_APP_API_KEY to Vercel Env Variables.";
+          console.error(msg);
+          setErrorMessage(msg);
           setConnectionState(ConnectionState.ERROR);
           return;
         }
@@ -81,12 +100,14 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         streamRef.current = stream;
         
         // Initialize Input Context
-        const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         if (inputCtx.state === 'suspended') {
           await inputCtx.resume();
         }
         inputAudioContextRef.current = inputCtx;
         
+        const inputSampleRate = inputCtx.sampleRate;
+
         const source = inputCtx.createMediaStreamSource(stream);
         const analyzer = inputCtx.createAnalyser();
         analyzer.fftSize = 64;
@@ -115,7 +136,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         outputNode.connect(outputCtx.destination);
 
         // 3. Initialize Gemini Client
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const ai = new GoogleGenAI({ apiKey: apiKey });
         
         // 4. Connect Session
         const sessionPromise = ai.live.connect({
@@ -137,7 +158,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
                 const inputData = e.inputBuffer.getChannelData(0);
-                const pcmBlob = createPcmBlob(inputData);
+                const pcmBlob = createPcmBlob(inputData, inputSampleRate);
                 sessionPromise.then(session => {
                    if (!isActive) return;
                    session.sendRealtimeInput({ media: pcmBlob });
@@ -151,8 +172,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
-                  // Use outputCtx from local closure to ensure consistency
-                  // This prevents "cannot connect to an AudioNode belonging to a different audio context"
                   const ctx = outputCtx;
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   
@@ -192,11 +211,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                     sessionPromise.then(session => {
                       if (!isActive) return;
                       session.sendToolResponse({
-                        functionResponses: {
+                        functionResponses: [{
                           id: fc.id,
                           name: fc.name,
                           response: { result: result.message }
-                        }
+                        }]
                       });
                     });
                   }
@@ -216,9 +235,12 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                 setConnectionState(ConnectionState.DISCONNECTED);
               }
             },
-            onerror: (err) => {
+            onerror: (err: any) => {
               console.error('Gemini Live Error', err);
               if (isActive) {
+                // Try to extract a meaningful message from the error event
+                const msg = err.message || "Connection refused. Check API Key.";
+                setErrorMessage(msg);
                 setConnectionState(ConnectionState.ERROR);
               }
             }
@@ -227,9 +249,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         
         activeSessionPromiseRef.current = sessionPromise;
 
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to start session:", e);
         if (isActive) {
+          setErrorMessage(e.message || 'Failed to initialize audio or network');
           setConnectionState(ConnectionState.ERROR);
         }
       }
@@ -239,7 +262,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       isActive = false;
       cancelAnimationFrame(animationFrame);
 
-      // Close Gemini Session
       if (activeSessionPromiseRef.current) {
           activeSessionPromiseRef.current.then(session => {
               try { session.close(); } catch(e) {}
@@ -278,11 +300,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
   const handleRetry = () => {
       onClose();
-      // Small timeout to allow state to reset before user opens again
-      setTimeout(() => {
-          // Parent app would need to handle re-opening, but here we just close
-          // The user can click the toggle again.
-      }, 100);
   };
 
   return (
@@ -295,12 +312,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         </button>
       </div>
 
-      <div className="flex flex-col items-center space-y-8 animate-pulse">
+      <div className="flex flex-col items-center space-y-8 animate-fade-in">
         {/* Visualizer Orb */}
         <div className="relative flex items-center justify-center">
-          {/* Outer glow varies by volume */}
           <div 
-            className={`w-40 h-40 rounded-full blur-xl transition-all duration-100 ${
+            className={`w-40 h-40 rounded-full blur-xl transition-all duration-300 ${
                 connectionState === ConnectionState.ERROR ? 'bg-red-500' :
                 isProcessing ? 'bg-green-500' : 'bg-indigo-500'
             }`}
@@ -310,7 +326,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             }}
           />
           
-          {/* Core Orb */}
           <div className="absolute w-32 h-32 rounded-full bg-gray-900 flex items-center justify-center border border-white/10 shadow-2xl z-10">
             {connectionState === ConnectionState.CONNECTING ? (
               <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -339,7 +354,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             </h2>
             <p className={`font-medium ${connectionState === ConnectionState.ERROR ? 'text-red-400' : 'text-indigo-300'}`}>
                 {connectionState === ConnectionState.CONNECTING ? 'Connecting...' : 
-                 connectionState === ConnectionState.ERROR ? 'Service Unavailable' : 
+                 connectionState === ConnectionState.ERROR ? errorMessage || 'Check API Key' : 
                  'Always On'}
             </p>
           </div>
