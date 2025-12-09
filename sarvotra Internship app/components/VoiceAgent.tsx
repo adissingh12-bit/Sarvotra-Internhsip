@@ -58,22 +58,32 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       try {
         setErrorMessage('');
         
-        // Robust API Key Retrieval for Vercel/React/Vite
+        // --- API KEY RETRIEVAL START ---
         let apiKey = '';
+        
+        // 1. Try Vite Standard (import.meta.env)
         try {
-          // Check all common prefixes used in frontend frameworks
-          apiKey = process.env.REACT_APP_API_KEY || 
-                   process.env.VITE_API_KEY || 
-                   process.env.NEXT_PUBLIC_API_KEY || 
-                   process.env.API_KEY || 
-                   '';
-        } catch (e) {
-          // Process might be undefined in some browser environments
-          console.warn("Process env access failed", e);
+          // @ts-ignore - Check if we are in a Vite environment
+          if (typeof import.meta !== 'undefined' && import.meta.env) {
+            // @ts-ignore
+            apiKey = import.meta.env.VITE_API_KEY || import.meta.env.REACT_APP_API_KEY;
+          }
+        } catch (e) {}
+
+        // 2. Try Node/CRA Standard (process.env)
+        if (!apiKey) {
+          try {
+            apiKey = process.env.REACT_APP_API_KEY || 
+                     process.env.VITE_API_KEY || 
+                     process.env.NEXT_PUBLIC_API_KEY || 
+                     process.env.API_KEY || 
+                     '';
+          } catch (e) {}
         }
+        // --- API KEY RETRIEVAL END ---
 
         if (!apiKey) {
-          const msg = "Missing API Key. Add REACT_APP_API_KEY to Vercel Env Variables.";
+          const msg = "Missing API Key. Please Redeploy Vercel Project.";
           console.error(msg);
           setErrorMessage(msg);
           setConnectionState(ConnectionState.ERROR);
