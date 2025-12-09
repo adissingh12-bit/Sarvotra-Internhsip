@@ -28,7 +28,7 @@ const ContactDetail: React.FC<ContactDetailProps> = ({ contact, transactions, on
   return (
     <div className="flex flex-col h-full bg-gray-50 animate-slide-in-right absolute inset-0 z-10">
       {/* Header */}
-      <div className="bg-white px-4 py-3 flex items-center space-x-3 shadow-sm border-b border-gray-100 sticky top-0">
+      <div className="bg-white px-4 py-3 flex items-center space-x-3 shadow-sm border-b border-gray-100 sticky top-0 z-20">
         <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-gray-100 text-gray-600">
            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -47,7 +47,7 @@ const ContactDetail: React.FC<ContactDetailProps> = ({ contact, transactions, on
       </div>
 
       {/* Chat/Transaction History */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
         <div className="text-center text-xs text-gray-400 my-4">Payment History with {contact.name.split(' ')[0]}</div>
         
         {sortedTransactions.length === 0 ? (
@@ -75,7 +75,7 @@ const ContactDetail: React.FC<ContactDetailProps> = ({ contact, transactions, on
       </div>
 
       {/* Pay Action Bar */}
-      <div className="bg-white p-4 border-t border-gray-100 shadow-lg sticky bottom-0">
+      <div className="bg-white p-4 border-t border-gray-100 shadow-lg sticky bottom-0 z-20">
         <form onSubmit={handlePay} className="flex items-center space-x-3">
           <div className="relative flex-1">
              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
