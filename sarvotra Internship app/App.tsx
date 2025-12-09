@@ -5,7 +5,7 @@ import VoiceAgent from './components/VoiceAgent';
 import BalanceCard from './components/BalanceCard';
 import ContactList from './components/ContactList';
 import TransactionList from './components/TransactionList';
-import ContactPayment from './components/ContactPayment'; // Updated import
+import PaymentView from './components/PaymentView';
 import ActionModal, { BankDetails } from './components/ActionModal';
 
 const App: React.FC = () => {
@@ -125,7 +125,7 @@ const App: React.FC = () => {
       case 'pay':
         if (selectedContact) {
             return (
-                <ContactPayment 
+                <PaymentView 
                     contact={selectedContact}
                     transactions={userState.transactions.filter(t => t.recipientId === selectedContact.id)}
                     onBack={() => setSelectedContact(null)}
