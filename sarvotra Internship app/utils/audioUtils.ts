@@ -1,4 +1,8 @@
-import { Blob } from '@google/genai';
+// We define the interface locally to avoid runtime import errors from the SDK
+export interface GenAIPartBlob {
+  data: string;
+  mimeType: string;
+}
 
 export function base64ToBytes(base64: string): Uint8Array {
   const binaryString = atob(base64);
@@ -38,15 +42,34 @@ export async function decodeAudioData(
   return buffer;
 }
 
-export function createPcmBlob(data: Float32Array): Blob {
-  const l = data.length;
-  const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) {
-    // Convert Float32 (-1.0 to 1.0) to Int16 (-32768 to 32767)
-    int16[i] = Math.max(-1, Math.min(1, data[i])) * 32768;
+function downsampleTo16k(inputData: Float32Array, inputSampleRate: number): Int16Array {
+  if (inputSampleRate === 16000) {
+    const l = inputData.length;
+    const result = new Int16Array(l);
+    for (let i = 0; i < l; i++) {
+      result[i] = Math.max(-1, Math.min(1, inputData[i])) * 32768;
+    }
+    return result;
   }
+
+  const ratio = inputSampleRate / 16000;
+  const newLength = Math.ceil(inputData.length / ratio);
+  const result = new Int16Array(newLength);
+  
+  for (let i = 0; i < newLength; i++) {
+    const offset = Math.floor(i * ratio);
+    // Use the nearest sample
+    const val = inputData[Math.min(offset, inputData.length - 1)];
+    result[i] = Math.max(-1, Math.min(1, val)) * 32768;
+  }
+  
+  return result;
+}
+
+export function createPcmBlob(data: Float32Array, sampleRate: number): GenAIPartBlob {
+  const int16Data = downsampleTo16k(data, sampleRate);
   return {
-    data: arrayBufferToBase64(new Uint8Array(int16.buffer)),
+    data: arrayBufferToBase64(new Uint8Array(int16Data.buffer)),
     mimeType: 'audio/pcm;rate=16000',
   };
 }
