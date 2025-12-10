@@ -58,7 +58,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       try {
         setErrorMessage('');
         
-        // --- API KEY RETRIEVAL START ---
+        // --- API KEY RETRIEVAL START (Browser Safe) ---
         let apiKey = '';
         
         // 1. Try Vite Standard (import.meta.env)
@@ -70,8 +70,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
           }
         } catch (e) {}
 
-        // 2. Try Node/CRA Standard (process.env)
-        if (!apiKey) {
+        // 2. Try Node/CRA Standard (process.env) - SAFELY
+        if (!apiKey && typeof process !== 'undefined' && process.env) {
           try {
             apiKey = process.env.REACT_APP_API_KEY || 
                      process.env.VITE_API_KEY || 
@@ -83,7 +83,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         // --- API KEY RETRIEVAL END ---
 
         if (!apiKey) {
-          const msg = "Missing API Key. Please Redeploy Vercel Project.";
+          const msg = "Missing API Key. Check environment variables.";
           console.error(msg);
           setErrorMessage(msg);
           setConnectionState(ConnectionState.ERROR);
@@ -110,7 +110,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         streamRef.current = stream;
         
         // Initialize Input Context
-        const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const inputCtx = new AudioContextClass();
         if (inputCtx.state === 'suspended') {
           await inputCtx.resume();
         }
@@ -137,7 +138,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
         
         // 2. Setup Audio Output
-        const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        const outputCtx = new AudioContextClass({ sampleRate: 24000 });
         if (outputCtx.state === 'suspended') {
           await outputCtx.resume();
         }
