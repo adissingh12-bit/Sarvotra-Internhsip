@@ -22,6 +22,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const [volume, setVolume] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isSpeaking, setIsSpeaking] = useState(false);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -30,7 +31,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const activeSessionPromiseRef = useRef<Promise<any> | null>(null);
   
-  // Safety: Prevent tool execution immediately after connection (Ghost inputs)
+  // Refs for state accessible in callbacks
+  const isProcessingRef = useRef(false);
   const sessionStartTimeRef = useRef<number>(0);
 
   // Define the tool
@@ -53,6 +55,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
     },
   };
 
+  // Sync ref with state
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
   useEffect(() => {
     let animationFrame: number;
     let isActive = true;
@@ -61,10 +68,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       try {
         setErrorMessage('');
         
-        // --- API KEY RETRIEVAL START (Browser Safe) ---
+        // --- API KEY RETRIEVAL START ---
         let apiKey = '';
-        
-        // 1. Try Vite Standard (import.meta.env)
         try {
           // @ts-ignore
           if (typeof import.meta !== 'undefined' && import.meta.env) {
@@ -73,7 +78,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
           }
         } catch (e) {}
 
-        // 2. Try Node/CRA Standard (process.env) - SAFELY
         if (!apiKey && typeof process !== 'undefined' && process.env) {
           try {
             apiKey = process.env.REACT_APP_API_KEY || 
@@ -127,7 +131,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
         analyzer.fftSize = 64;
         source.connect(analyzer);
         
-        // Volume Visualization Logic
         const updateVolume = () => {
           if (!isActive || !streamRef.current) return;
           const dataArray = new Uint8Array(analyzer.frequencyBinCount);
@@ -166,12 +169,16 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
           callbacks: {
             onopen: () => {
               if (!isActive) return;
-              console.log('Gemini Live Connected - Listening for Wake Word');
+              console.log('Gemini Live Connected');
               setConnectionState(ConnectionState.CONNECTED);
-              sessionStartTimeRef.current = Date.now(); // Start safety timer
+              sessionStartTimeRef.current = Date.now();
               
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
+                // CRITICAL FIX: Stop sending audio while processing a tool
+                // This prevents background noise from interrupting the AI's response
+                if (isProcessingRef.current) return; 
+
                 const inputData = e.inputBuffer.getChannelData(0);
                 const pcmBlob = createPcmBlob(inputData, inputSampleRate);
                 sessionPromise.then(session => {
@@ -185,9 +192,15 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             onmessage: async (message: LiveServerMessage) => {
               if (!isActive) return;
 
+              // Ensure audio context is running when we receive any message
+              if (outputCtx.state === 'suspended') {
+                  await outputCtx.resume();
+              }
+
               // Handle Audio Output
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
+                  setIsSpeaking(true);
                   const ctx = outputCtx;
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   
@@ -204,7 +217,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                     bufferSource.connect(outputNode);
                     
                     bufferSource.addEventListener('ended', () => {
-                      if (sourcesRef.current) sourcesRef.current.delete(bufferSource);
+                      if (sourcesRef.current) {
+                          sourcesRef.current.delete(bufferSource);
+                          if (sourcesRef.current.size === 0) setIsSpeaking(false);
+                      }
                     });
 
                     bufferSource.start(nextStartTimeRef.current);
@@ -219,28 +235,20 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               if (message.toolCall) {
                 if (!isActive) return;
 
-                // --- SAFETY CHECK: Ignore tools in first 3 seconds ---
-                const timeSinceStart = Date.now() - sessionStartTimeRef.current;
-                if (timeSinceStart < 3000) {
-                    console.warn("Blocking potential phantom tool call on connection");
-                    // We send a failure response so the model knows it was blocked, 
-                    // or we could just ignore it. Sending failure is safer for state sync.
-                    sessionPromise.then(session => {
+                // Safety: Ignore first 3s
+                if (Date.now() - sessionStartTimeRef.current < 3000) {
+                     sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
                             functionResponses: message.toolCall!.functionCalls.map(fc => ({
-                                id: fc.id,
-                                name: fc.name,
-                                response: { result: "Error: System initializing. Please repeat the command." }
+                                id: fc.id, name: fc.name, response: { result: "Error: Initializing." }
                             }))
                         });
                     });
                     return;
                 }
-                // -----------------------------------------------------
 
                 setIsProcessing(true);
-                console.log('Tool call received:', message.toolCall);
                 
                 try {
                   for (const fc of message.toolCall.functionCalls) {
@@ -248,12 +256,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                       const { contactName, amount } = fc.args as any;
                       const result = await onPaymentRequest(contactName, amount);
                       
-                      console.log('Payment result:', result);
-                      
-                      // CRITICAL: Ensure audio context is awake so we can hear the reply
-                      if (outputCtx.state === 'suspended') {
-                          await outputCtx.resume();
-                      }
+                      // Wait a moment to ensure previous audio cleared
+                      if (outputCtx.state === 'suspended') await outputCtx.resume();
 
                       sessionPromise.then(session => {
                         if (!isActive) return;
@@ -261,7 +265,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                           functionResponses: [{
                             id: fc.id,
                             name: fc.name,
-                            response: { result: result.message }
+                            response: { result: result.message } // The model MUST read this result
                           }]
                         });
                       });
@@ -270,14 +274,19 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                 } catch (err) {
                   console.error("Error executing tool:", err);
                 } finally {
-                  setIsProcessing(false);
+                  // Small delay before unmuting mic to let model start speaking
+                  setTimeout(() => {
+                      if (isActive) setIsProcessing(false);
+                  }, 1000);
                 }
               }
               
               if (message.serverContent?.interrupted) {
+                 console.log("Interrupted by user");
                  sourcesRef.current.forEach(s => s.stop());
                  sourcesRef.current.clear();
                  nextStartTimeRef.current = 0;
+                 setIsSpeaking(false);
               }
             },
             onclose: () => {
@@ -289,8 +298,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             onerror: (err: any) => {
               console.error('Gemini Live Error', err);
               if (isActive) {
-                const msg = err.message || "Connection refused. Check API Key.";
-                setErrorMessage(msg);
+                setErrorMessage(err.message || "Connection refused.");
                 setConnectionState(ConnectionState.ERROR);
               }
             }
@@ -302,7 +310,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       } catch (e: any) {
         console.error("Failed to start session:", e);
         if (isActive) {
-          setErrorMessage(e.message || 'Failed to initialize audio or network');
+          setErrorMessage(e.message || 'Failed to initialize');
           setConnectionState(ConnectionState.ERROR);
         }
       }
@@ -335,6 +343,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       });
       sourcesRef.current.clear();
       setVolume(0);
+      setIsSpeaking(false);
     };
 
     if (isOpen) {
@@ -347,10 +356,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   }, [isOpen, onPaymentRequest, setConnectionState]);
 
   if (!isOpen) return null;
-
-  const handleRetry = () => {
-      onClose();
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/95 backdrop-blur-md text-white transition-opacity duration-300">
@@ -368,10 +373,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
           <div 
             className={`w-40 h-40 rounded-full blur-xl transition-all duration-300 ${
                 connectionState === ConnectionState.ERROR ? 'bg-red-500' :
+                isSpeaking ? 'bg-blue-400 opacity-80' : 
                 isProcessing ? 'bg-green-500' : 'bg-indigo-500'
             }`}
             style={{ 
-              transform: connectionState === ConnectionState.CONNECTED ? `scale(${1 + volume / 60})` : 'scale(1)',
+              transform: isSpeaking ? `scale(${1 + volume / 40})` : 'scale(1)',
               opacity: 0.6 + (volume / 100)
             }}
           />
@@ -387,7 +393,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                </div>
             ) : (
               <div 
-                 className={`w-6 h-6 rounded-full transition-all duration-300 ${isProcessing ? 'bg-green-400 animate-bounce' : 'bg-indigo-400'}`} 
+                 className={`w-6 h-6 rounded-full transition-all duration-300 ${
+                     isProcessing ? 'bg-green-400 animate-bounce' : 
+                     isSpeaking ? 'bg-blue-400 animate-pulse' : 'bg-indigo-400'
+                 }`} 
                  style={{ 
                    transform: `scale(${1 + volume / 40})`,
                    boxShadow: `0 0 ${volume}px ${isProcessing ? '#4ade80' : '#818cf8'}`
@@ -405,6 +414,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             <p className={`font-medium ${connectionState === ConnectionState.ERROR ? 'text-red-400' : 'text-indigo-300'}`}>
                 {connectionState === ConnectionState.CONNECTING ? 'Connecting...' : 
                  connectionState === ConnectionState.ERROR ? errorMessage || 'Check API Key' : 
+                 isSpeaking ? 'Speaking...' :
+                 isProcessing ? 'Processing Transaction...' :
                  'Listening for "Sarvatra"'}
             </p>
           </div>
@@ -418,17 +429,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
           {connectionState === ConnectionState.ERROR && (
               <button 
-                onClick={handleRetry}
+                onClick={() => onClose()}
                 className="bg-white text-gray-900 px-6 py-2 rounded-full font-semibold hover:bg-gray-100 transition"
               >
                   Close & Retry
               </button>
-          )}
-
-          {isProcessing && (
-            <div className="inline-flex items-center space-x-2 text-green-400 bg-green-400/10 px-3 py-1 rounded-full text-xs font-semibold animate-pulse">
-              <span>Processing Payment...</span>
-            </div>
           )}
         </div>
       </div>
