@@ -35,6 +35,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   // Refs for state accessible in callbacks to prevent stale closures
   const isProcessingRef = useRef(false);
   const isSpeakingRef = useRef(false);
+  const isWaitingForResponseRef = useRef(false); // NEW: Bridge state
   const sessionStartTimeRef = useRef<number>(0);
 
   // Define the tool
@@ -188,12 +189,12 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
                 
-                // CRITICAL FIX: "Walkie-Talkie" Mode
-                // If the app is PROCESSING a tool (Thinking) OR if the Agent is SPEAKING
-                // we MUTE the microphone. This prevents:
-                // 1. Echo looping back into the input
-                // 2. Background noise interpreting as a "User Turn" which cancels the Agent's reply
-                if (isProcessingRef.current || isSpeakingRef.current) return; 
+                // CRITICAL FIX: "Walkie-Talkie" Mode & Hand-off
+                // Block mic if: 
+                // 1. Processing tool
+                // 2. Speaking
+                // 3. Waiting for response (The gap between tool done and audio start)
+                if (isProcessingRef.current || isSpeakingRef.current || isWaitingForResponseRef.current) return; 
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 const pcmBlob = createPcmBlob(inputData, inputSampleRate);
@@ -216,6 +217,9 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Audio Output
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
+                  // Hand-off: Audio received, we are no longer "waiting", we are now "speaking"
+                  isWaitingForResponseRef.current = false;
+                  
                   setIsSpeaking(true); // Locks the mic via isSpeakingRef
                   const ctx = outputCtx;
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
@@ -251,7 +255,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Tool Calls
               if (message.toolCall) {
                 if (!isActive) return;
-                if (isProcessingRef.current) return; // Prevent double trigger
+                if (isProcessingRef.current) return; 
 
                 // Warmup Safety
                 const timeSinceStart = Date.now() - sessionStartTimeRef.current;
@@ -277,7 +281,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
                       const result = await onPaymentRequest(contactName, amount);
                       
-                      // 1. Send the result to Gemini
+                      // 1. Send result
                       sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
@@ -289,18 +293,23 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                         });
                       });
 
-                      // 2. KEEP THE MIC LOCKED. 
-                      // Do not set isProcessing(false) immediately.
-                      // We wait for a second to allow the network request to fly and the model to start generating audio.
-                      // Once audio arrives, isSpeaking becomes true, which keeps the mic locked.
-                      setTimeout(() => {
-                        if (isActive) setIsProcessing(false);
-                      }, 1000);
+                      // 2. Hand-off: Tool is done, but we MUST wait for the voice to start.
+                      // Do NOT unlock mic yet.
+                      if (isActive) {
+                          setIsProcessing(false); // Update UI
+                          isWaitingForResponseRef.current = true; // KEEP MIC LOCKED
+                          
+                          // Safety fallback: If model says absolutely nothing for 4 seconds, unlock.
+                          setTimeout(() => {
+                              isWaitingForResponseRef.current = false;
+                          }, 4000);
+                      }
                     }
                   }
                 } catch (err) {
                   console.error("Error executing tool:", err);
                   if (isActive) setIsProcessing(false);
+                  isWaitingForResponseRef.current = false;
                 }
               }
               
@@ -310,6 +319,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                  sourcesRef.current.clear();
                  nextStartTimeRef.current = 0;
                  setIsSpeaking(false);
+                 isWaitingForResponseRef.current = false;
               }
             },
             onclose: () => {
@@ -369,6 +379,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       setIsSpeaking(false);
       setIsProcessing(false);
       setIsWarmup(false);
+      isWaitingForResponseRef.current = false;
     };
 
     if (isOpen) {
