@@ -45,7 +45,7 @@ const App: React.FC = () => {
     if (!contact) {
       return { 
         success: false, 
-        message: `SYSTEM_RESPONSE: Error. Contact named ${contactName} not found. Please ask the user to specify a valid name.` 
+        message: `TELL USER: Error. I could not find a contact named ${contactName}. Please try again with a valid name.` 
       };
     }
 
@@ -57,7 +57,7 @@ const App: React.FC = () => {
     if (userState.balance < amount) {
       return {
         success: false,
-        message: `SYSTEM_RESPONSE: Failed. Insufficient funds. Current balance is $${userState.balance.toFixed(2)}. Inform the user.`
+        message: `TELL USER: Payment failed. You have insufficient funds. Your current balance is $${userState.balance.toFixed(2)}.`
       };
     }
 
@@ -82,8 +82,8 @@ const App: React.FC = () => {
 
     return {
       success: true,
-      // We format this message for the LLM to read out loud
-      message: `SYSTEM_RESPONSE: Success. Processed payment of $${amount} to ${contact.name}. Remaining balance is $${(userState.balance - amount).toFixed(2)}. TELL THE USER THIS.`
+      // Prefixing with "TELL USER:" forces the model to read it.
+      message: `TELL USER: Payment successful. I have sent $${amount} to ${contact.name}. Your new balance is $${(userState.balance - amount).toFixed(2)}.`
     };
   };
 
