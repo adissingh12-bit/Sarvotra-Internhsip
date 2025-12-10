@@ -12,13 +12,17 @@
       window.addEventListener('error', function(event) {
         const root = document.getElementById('root');
         if (root) {
+          // Check if we are seeing a module error
+          const isModuleError = event.message && (event.message.includes('import') || event.message.includes('module'));
+          
           root.innerHTML = `
-            <div style="font-family: sans-serif; color: #ef4444; padding: 2rem; text-align: center;">
+            <div style="font-family: sans-serif; color: #ef4444; padding: 2rem; text-align: center; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
               <h1 style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem;">Application Error</h1>
-              <p style="background: #fee2e2; padding: 1rem; border-radius: 0.5rem; display: inline-block; text-align: left;">
-                ${event.message}<br/>
-                <small style="opacity: 0.7; display: block; margin-top: 0.5rem;">Check console for details.</small>
+              <p style="background: #fee2e2; padding: 1rem; border-radius: 0.5rem; display: inline-block; text-align: left; max-width: 600px;">
+                <strong>Message:</strong> ${event.message || 'Unknown Error'}<br/>
+                ${event.filename ? `<small style="display:block; margin-top:0.5rem">File: ${event.filename}</small>` : ''}
               </p>
+              ${isModuleError ? '<p style="margin-top: 1rem; color: #4b5563;">This looks like a module loading error. Check your internet connection or the library versions in index.html.</p>' : ''}
             </div>
           `;
         }
@@ -72,7 +76,7 @@
     "react-dom": "https://esm.sh/react-dom@18.3.1",
     "react-dom/": "https://esm.sh/react-dom@18.3.1/",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0"
+    "@google/genai": "https://esm.sh/@google/genai@0.1.2"
   }
 }
 </script>
@@ -80,12 +84,14 @@
   <body>
     <div id="root">
         <!-- Default Loading State -->
-        <div style="display: flex; height: 100vh; align-items: center; justify-content: center; color: #6b7280;">
-            <svg class="animate-spin" style="width: 2rem; height: 2rem; margin-right: 0.5rem;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path style="opacity: 0.75;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span>Loading App...</span>
+        <div style="display: flex; height: 100vh; align-items: center; justify-content: center; color: #6b7280; flex-direction: column;">
+            <div style="margin-bottom: 1rem;">
+                <svg class="animate-spin" style="width: 2rem; height: 2rem; color: #4f46e5;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path style="opacity: 0.75;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+            <span style="font-weight: 500;">Loading Sarvotra Pay...</span>
         </div>
     </div>
     <script type="module" src="/index.tsx"></script>
