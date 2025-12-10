@@ -29,6 +29,9 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const activeSessionPromiseRef = useRef<Promise<any> | null>(null);
+  
+  // Safety: Prevent tool execution immediately after connection (Ghost inputs)
+  const sessionStartTimeRef = useRef<number>(0);
 
   // Define the tool
   const paymentTool: FunctionDeclaration = {
@@ -165,6 +168,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               if (!isActive) return;
               console.log('Gemini Live Connected - Listening for Wake Word');
               setConnectionState(ConnectionState.CONNECTED);
+              sessionStartTimeRef.current = Date.now(); // Start safety timer
               
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
@@ -214,6 +218,27 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Tool Calls
               if (message.toolCall) {
                 if (!isActive) return;
+
+                // --- SAFETY CHECK: Ignore tools in first 3 seconds ---
+                const timeSinceStart = Date.now() - sessionStartTimeRef.current;
+                if (timeSinceStart < 3000) {
+                    console.warn("Blocking potential phantom tool call on connection");
+                    // We send a failure response so the model knows it was blocked, 
+                    // or we could just ignore it. Sending failure is safer for state sync.
+                    sessionPromise.then(session => {
+                        if (!isActive) return;
+                        session.sendToolResponse({
+                            functionResponses: message.toolCall!.functionCalls.map(fc => ({
+                                id: fc.id,
+                                name: fc.name,
+                                response: { result: "Error: System initializing. Please repeat the command." }
+                            }))
+                        });
+                    });
+                    return;
+                }
+                // -----------------------------------------------------
+
                 setIsProcessing(true);
                 console.log('Tool call received:', message.toolCall);
                 
@@ -225,8 +250,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                       
                       console.log('Payment result:', result);
                       
-                      // Ensure audio context is awake before response comes back
-                      if (outputCtx.state === 'suspended') await outputCtx.resume();
+                      // CRITICAL: Ensure audio context is awake so we can hear the reply
+                      if (outputCtx.state === 'suspended') {
+                          await outputCtx.resume();
+                      }
 
                       sessionPromise.then(session => {
                         if (!isActive) return;
@@ -378,13 +405,13 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             <p className={`font-medium ${connectionState === ConnectionState.ERROR ? 'text-red-400' : 'text-indigo-300'}`}>
                 {connectionState === ConnectionState.CONNECTING ? 'Connecting...' : 
                  connectionState === ConnectionState.ERROR ? errorMessage || 'Check API Key' : 
-                 'Always On'}
+                 'Listening for "Sarvatra"'}
             </p>
           </div>
           
           {connectionState === ConnectionState.CONNECTED && (
             <div className="bg-white/5 p-4 rounded-xl border border-white/5 text-sm text-gray-400">
-                <p className="mb-2">Say <span className="text-white font-bold">"Sarvotra"</span> to wake me up.</p>
+                <p className="mb-2">Say <span className="text-white font-bold">"Sarvatra"</span> to wake me up.</p>
                 <p>Then try: "Pay Alice 50 dollars"</p>
             </div>
           )}
