@@ -45,7 +45,7 @@ const App: React.FC = () => {
     if (!contact) {
       return { 
         success: false, 
-        message: `TELL USER: Error. I could not find a contact named ${contactName}. Please try again with a valid name.` 
+        message: `SYSTEM_ERROR: Contact '${contactName}' not found. Ask user to clarify.` 
       };
     }
 
@@ -57,7 +57,7 @@ const App: React.FC = () => {
     if (userState.balance < amount) {
       return {
         success: false,
-        message: `TELL USER: Payment failed. You have insufficient funds. Your current balance is $${userState.balance.toFixed(2)}.`
+        message: `SYSTEM_ALERT: Insufficient funds. Balance: $${userState.balance}. Inform user payment failed.`
       };
     }
 
@@ -82,8 +82,8 @@ const App: React.FC = () => {
 
     return {
       success: true,
-      // Prefixing with "TELL USER:" forces the model to read it.
-      message: `TELL USER: Payment successful. I have sent $${amount} to ${contact.name}. Your new balance is $${(userState.balance - amount).toFixed(2)}.`
+      // We return a "System Command" string. This pattern forces the LLM to interpret and vocalize it.
+      message: `SYSTEM_SUCCESS: Payment ID ${newTransaction.id} complete. Sent $${amount} to ${contact.name}. New Balance: $${(userState.balance - amount).toFixed(2)}. SPEAK THIS CONFIRMATION TO THE USER.`
     };
   };
 
@@ -191,7 +191,7 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-center h-24 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 text-gray-400 group hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-500 transition">
                     <div className="flex flex-col items-center">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
                         </svg>
                         <span className="text-xs">Scan QR Code</span>
                     </div>
