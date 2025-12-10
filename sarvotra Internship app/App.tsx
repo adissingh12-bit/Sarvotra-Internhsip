@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { UserState, Transaction, ConnectionState, Tab, Contact } from './types';
 import { MOCK_CONTACTS, INITIAL_BALANCE } from './constants';
 import VoiceAgent from './components/VoiceAgent';
@@ -21,6 +21,10 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [activeModal, setActiveModal] = useState<'addMoney' | 'bankTransfer' | null>(null);
+
+  useEffect(() => {
+    console.log("App Component Mounted Successfully");
+  }, []);
 
   // Filter contacts based on search
   const filteredContacts = useMemo(() => {
