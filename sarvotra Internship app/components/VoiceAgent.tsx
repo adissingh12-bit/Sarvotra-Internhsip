@@ -23,7 +23,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isWarmup, setIsWarmup] = useState(false); // New Warmup State
+  const [isWarmup, setIsWarmup] = useState(false); 
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -32,8 +32,9 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const activeSessionPromiseRef = useRef<Promise<any> | null>(null);
   
-  // Refs for state accessible in callbacks
+  // Refs for state accessible in callbacks to prevent stale closures
   const isProcessingRef = useRef(false);
+  const isSpeakingRef = useRef(false);
   const sessionStartTimeRef = useRef<number>(0);
 
   // Define the tool
@@ -56,10 +57,14 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
     },
   };
 
-  // Sync ref with state
+  // Sync refs with state
   useEffect(() => {
     isProcessingRef.current = isProcessing;
   }, [isProcessing]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
 
   useEffect(() => {
     let animationFrame: number;
@@ -182,8 +187,13 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
-                // CRITICAL FIX: Stop sending audio while processing a tool
-                if (isProcessingRef.current) return; 
+                
+                // CRITICAL FIX: "Walkie-Talkie" Mode
+                // If the app is PROCESSING a tool (Thinking) OR if the Agent is SPEAKING
+                // we MUTE the microphone. This prevents:
+                // 1. Echo looping back into the input
+                // 2. Background noise interpreting as a "User Turn" which cancels the Agent's reply
+                if (isProcessingRef.current || isSpeakingRef.current) return; 
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 const pcmBlob = createPcmBlob(inputData, inputSampleRate);
@@ -198,7 +208,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             onmessage: async (message: LiveServerMessage) => {
               if (!isActive) return;
 
-              // Ensure audio context is running when we receive any message
+              // Ensure audio context is running
               if (outputCtx.state === 'suspended') {
                   await outputCtx.resume();
               }
@@ -206,7 +216,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Audio Output
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
-                  setIsSpeaking(true);
+                  setIsSpeaking(true); // Locks the mic via isSpeakingRef
                   const ctx = outputCtx;
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   
@@ -225,6 +235,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                     bufferSource.addEventListener('ended', () => {
                       if (sourcesRef.current) {
                           sourcesRef.current.delete(bufferSource);
+                          // Only set isSpeaking to false if no other sources are playing
                           if (sourcesRef.current.size === 0) setIsSpeaking(false);
                       }
                     });
@@ -240,19 +251,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Tool Calls
               if (message.toolCall) {
                 if (!isActive) return;
+                if (isProcessingRef.current) return; // Prevent double trigger
 
-                // --- ROBUST SAFETY CHECKS ---
-                
-                // 1. If we are already processing, IGNORE further calls (Prevent loops)
-                if (isProcessingRef.current) {
-                    console.warn("Blocking overlapping tool call");
-                    return; 
-                }
-
-                // 2. WARMUP CHECK: Block all tools for first 5 seconds
+                // Warmup Safety
                 const timeSinceStart = Date.now() - sessionStartTimeRef.current;
                 if (timeSinceStart < 5000) {
-                     console.warn("Blocked phantom tool call during warmup");
                      sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
@@ -264,7 +267,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                     return;
                 }
 
-                setIsProcessing(true);
+                setIsProcessing(true); // Locks the mic
                 
                 try {
                   for (const fc of message.toolCall.functionCalls) {
@@ -274,27 +277,30 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
                       const result = await onPaymentRequest(contactName, amount);
                       
-                      // Wait a moment to ensure previous audio cleared
-                      if (outputCtx.state === 'suspended') await outputCtx.resume();
-
-                      // Reset processing BEFORE sending response so mic opens up for the reply conversation
-                      if (isActive) setIsProcessing(false); 
-
+                      // 1. Send the result to Gemini
                       sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
                           functionResponses: [{
                             id: fc.id,
                             name: fc.name,
-                            response: { result: result.message } // The model MUST read this result
+                            response: { result: result.message }
                           }]
                         });
                       });
+
+                      // 2. KEEP THE MIC LOCKED. 
+                      // Do not set isProcessing(false) immediately.
+                      // We wait for a second to allow the network request to fly and the model to start generating audio.
+                      // Once audio arrives, isSpeaking becomes true, which keeps the mic locked.
+                      setTimeout(() => {
+                        if (isActive) setIsProcessing(false);
+                      }, 1000);
                     }
                   }
                 } catch (err) {
                   console.error("Error executing tool:", err);
-                  if (isActive) setIsProcessing(false); // Ensure we unlock if error
+                  if (isActive) setIsProcessing(false);
                 }
               }
               
@@ -361,7 +367,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       sourcesRef.current.clear();
       setVolume(0);
       setIsSpeaking(false);
-      setIsProcessing(false); // Force reset
+      setIsProcessing(false);
       setIsWarmup(false);
     };
 
@@ -436,7 +442,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                 {connectionState === ConnectionState.CONNECTING ? 'Connecting...' : 
                  connectionState === ConnectionState.ERROR ? errorMessage || 'Check API Key' : 
                  isWarmup ? 'Initializing Secure Channel...' :
-                 isSpeaking ? 'Speaking...' :
+                 isSpeaking ? 'Sarvatra is speaking...' :
                  isProcessing ? 'Processing Transaction...' :
                  'Listening for "Sarvatra"'}
             </p>
