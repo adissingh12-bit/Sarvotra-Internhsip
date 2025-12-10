@@ -181,7 +181,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               sessionStartTimeRef.current = Date.now();
               setIsWarmup(true);
 
-              // Remove warmup status after 3 seconds (was 5, 3 is usually enough if logic is strict)
+              // Remove warmup status after 3 seconds
               setTimeout(() => {
                   if (isActive) setIsWarmup(false);
               }, 3000);
@@ -189,7 +189,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
                 
-                // CRITICAL FIX: "Walkie-Talkie" Mode & Hand-off
+                // Mute mic if we are processing, speaking, or waiting for a reply
                 if (isProcessingRef.current || isSpeakingRef.current || isWaitingForResponseRef.current) return; 
 
                 const inputData = e.inputBuffer.getChannelData(0);
@@ -211,12 +211,15 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               }
 
               // Handle Audio Output
+              // NOTE: We do NOT check isProcessingRef here. The audio might arrive WHILE we are 'processing' the end of the tool call.
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio) {
                   // Hand-off: Audio received, we are no longer "waiting", we are now "speaking"
                   isWaitingForResponseRef.current = false;
                   
-                  setIsSpeaking(true); // Locks the mic
+                  setIsSpeaking(true); 
+                  isSpeakingRef.current = true; // Manual ref update for immediate safety
+
                   const ctx = outputCtx;
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   
@@ -236,11 +239,11 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                       if (sourcesRef.current) {
                           sourcesRef.current.delete(bufferSource);
                           // SQUELTCH TAIL: Wait 500ms after audio ends before unlocking mic
-                          // This prevents capturing the echo of the AI's own voice
                           if (sourcesRef.current.size === 0) {
                               setTimeout(() => {
                                   if (isActive && sourcesRef.current.size === 0) {
                                       setIsSpeaking(false);
+                                      isSpeakingRef.current = false;
                                   }
                               }, 500);
                           }
@@ -258,16 +261,15 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               // Handle Tool Calls
               if (message.toolCall) {
                 if (!isActive) return;
+                // If we are already processing, ignore duplicate calls (debounce)
                 if (isProcessingRef.current) return; 
 
                 // Warmup / Hallucination Safety
-                // If a tool is called within 3 seconds of start, it is likely a hallucination from initial noise.
                 const timeSinceStart = Date.now() - sessionStartTimeRef.current;
                 if (timeSinceStart < 3000) {
                      console.warn("Blocked early tool call (Hallucination protection)");
                      sessionPromise.then(session => {
                         if (!isActive) return;
-                        // Sending "IGNORING_NOISE" helps the model understand it made a mistake
                         session.sendToolResponse({
                             functionResponses: message.toolCall!.functionCalls.map(fc => ({
                                 id: fc.id, name: fc.name, response: { result: "IGNORING_STARTUP_NOISE" }
@@ -277,7 +279,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                     return;
                 }
 
-                setIsProcessing(true); // Locks the mic
+                setIsProcessing(true); 
+                isProcessingRef.current = true; // Manual sync
                 
                 try {
                   for (const fc of message.toolCall.functionCalls) {
@@ -287,7 +290,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
                       const result = await onPaymentRequest(contactName, amount);
                       
-                      // 1. Send result
+                      // 1. Send result to Gemini
                       sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
@@ -301,10 +304,12 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
 
                       // 2. Hand-off
                       if (isActive) {
-                          setIsProcessing(false); // Update UI
-                          isWaitingForResponseRef.current = true; // KEEP MIC LOCKED
+                          setIsProcessing(false); 
+                          isProcessingRef.current = false; // Immediate manual sync to allow audio throughput
                           
-                          // Safety fallback
+                          isWaitingForResponseRef.current = true; // KEEP MIC LOCKED while we wait for success audio
+                          
+                          // Safety fallback: Unfreeze if no audio comes in 4 seconds
                           setTimeout(() => {
                               isWaitingForResponseRef.current = false;
                           }, 4000);
@@ -313,7 +318,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                   }
                 } catch (err) {
                   console.error("Error executing tool:", err);
-                  if (isActive) setIsProcessing(false);
+                  if (isActive) {
+                    setIsProcessing(false);
+                    isProcessingRef.current = false;
+                  }
                   isWaitingForResponseRef.current = false;
                 }
               }
@@ -323,7 +331,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                  sourcesRef.current.forEach(s => s.stop());
                  sourcesRef.current.clear();
                  nextStartTimeRef.current = 0;
+                 
                  setIsSpeaking(false);
+                 isSpeakingRef.current = false;
+
                  isWaitingForResponseRef.current = false;
               }
             },
@@ -385,6 +396,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       setIsProcessing(false);
       setIsWarmup(false);
       isWaitingForResponseRef.current = false;
+      isProcessingRef.current = false;
+      isSpeakingRef.current = false;
     };
 
     if (isOpen) {
