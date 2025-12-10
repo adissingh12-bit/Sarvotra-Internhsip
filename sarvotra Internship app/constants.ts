@@ -1,4 +1,3 @@
-
 import { Contact } from './types';
 
 export const MOCK_CONTACTS: Contact[] = [
@@ -35,3 +34,4 @@ You are Sarvotra, an intelligent, hands-free banking assistant.
    - Use Indian English/Hinglish accent nuances if possible.
    - Keep responses concise.
 `;
+
