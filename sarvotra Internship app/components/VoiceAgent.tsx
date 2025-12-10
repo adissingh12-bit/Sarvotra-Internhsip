@@ -23,6 +23,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isWarmup, setIsWarmup] = useState(false); // New Warmup State
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -172,11 +173,16 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               console.log('Gemini Live Connected');
               setConnectionState(ConnectionState.CONNECTED);
               sessionStartTimeRef.current = Date.now();
+              setIsWarmup(true);
+
+              // Remove warmup status after 5 seconds
+              setTimeout(() => {
+                  if (isActive) setIsWarmup(false);
+              }, 5000);
               
               scriptProcessor.onaudioprocess = (e) => {
                 if (!isActive) return;
                 // CRITICAL FIX: Stop sending audio while processing a tool
-                // This prevents background noise from interrupting the AI's response
                 if (isProcessingRef.current) return; 
 
                 const inputData = e.inputBuffer.getChannelData(0);
@@ -235,13 +241,23 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               if (message.toolCall) {
                 if (!isActive) return;
 
-                // Safety: Ignore first 3s
-                if (Date.now() - sessionStartTimeRef.current < 3000) {
+                // --- ROBUST SAFETY CHECKS ---
+                
+                // 1. If we are already processing, IGNORE further calls (Prevent loops)
+                if (isProcessingRef.current) {
+                    console.warn("Blocking overlapping tool call");
+                    return; 
+                }
+
+                // 2. WARMUP CHECK: Block all tools for first 5 seconds
+                const timeSinceStart = Date.now() - sessionStartTimeRef.current;
+                if (timeSinceStart < 5000) {
+                     console.warn("Blocked phantom tool call during warmup");
                      sessionPromise.then(session => {
                         if (!isActive) return;
                         session.sendToolResponse({
                             functionResponses: message.toolCall!.functionCalls.map(fc => ({
-                                id: fc.id, name: fc.name, response: { result: "Error: Initializing." }
+                                id: fc.id, name: fc.name, response: { result: "System initializing. Please wait." }
                             }))
                         });
                     });
@@ -254,10 +270,15 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                   for (const fc of message.toolCall.functionCalls) {
                     if (fc.name === 'makePayment') {
                       const { contactName, amount } = fc.args as any;
+                      console.log(`Processing payment: ${contactName}, ${amount}`);
+
                       const result = await onPaymentRequest(contactName, amount);
                       
                       // Wait a moment to ensure previous audio cleared
                       if (outputCtx.state === 'suspended') await outputCtx.resume();
+
+                      // Reset processing BEFORE sending response so mic opens up for the reply conversation
+                      if (isActive) setIsProcessing(false); 
 
                       sessionPromise.then(session => {
                         if (!isActive) return;
@@ -273,11 +294,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
                   }
                 } catch (err) {
                   console.error("Error executing tool:", err);
-                } finally {
-                  // Small delay before unmuting mic to let model start speaking
-                  setTimeout(() => {
-                      if (isActive) setIsProcessing(false);
-                  }, 1000);
+                  if (isActive) setIsProcessing(false); // Ensure we unlock if error
                 }
               }
               
@@ -344,6 +361,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
       sourcesRef.current.clear();
       setVolume(0);
       setIsSpeaking(false);
+      setIsProcessing(false); // Force reset
+      setIsWarmup(false);
     };
 
     if (isOpen) {
@@ -373,6 +392,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
           <div 
             className={`w-40 h-40 rounded-full blur-xl transition-all duration-300 ${
                 connectionState === ConnectionState.ERROR ? 'bg-red-500' :
+                isWarmup ? 'bg-orange-500' :
                 isSpeaking ? 'bg-blue-400 opacity-80' : 
                 isProcessing ? 'bg-green-500' : 'bg-indigo-500'
             }`}
@@ -395,11 +415,12 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
               <div 
                  className={`w-6 h-6 rounded-full transition-all duration-300 ${
                      isProcessing ? 'bg-green-400 animate-bounce' : 
-                     isSpeaking ? 'bg-blue-400 animate-pulse' : 'bg-indigo-400'
+                     isSpeaking ? 'bg-blue-400 animate-pulse' : 
+                     isWarmup ? 'bg-orange-400' : 'bg-indigo-400'
                  }`} 
                  style={{ 
                    transform: `scale(${1 + volume / 40})`,
-                   boxShadow: `0 0 ${volume}px ${isProcessing ? '#4ade80' : '#818cf8'}`
+                   boxShadow: `0 0 ${volume}px ${isProcessing ? '#4ade80' : isWarmup ? '#fb923c' : '#818cf8'}`
                  }}
               />
             )}
@@ -414,13 +435,14 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({
             <p className={`font-medium ${connectionState === ConnectionState.ERROR ? 'text-red-400' : 'text-indigo-300'}`}>
                 {connectionState === ConnectionState.CONNECTING ? 'Connecting...' : 
                  connectionState === ConnectionState.ERROR ? errorMessage || 'Check API Key' : 
+                 isWarmup ? 'Initializing Secure Channel...' :
                  isSpeaking ? 'Speaking...' :
                  isProcessing ? 'Processing Transaction...' :
                  'Listening for "Sarvatra"'}
             </p>
           </div>
           
-          {connectionState === ConnectionState.CONNECTED && (
+          {connectionState === ConnectionState.CONNECTED && !isWarmup && (
             <div className="bg-white/5 p-4 rounded-xl border border-white/5 text-sm text-gray-400">
                 <p className="mb-2">Say <span className="text-white font-bold">"Sarvatra"</span> to wake me up.</p>
                 <p>Then try: "Pay Alice 50 dollars"</p>
